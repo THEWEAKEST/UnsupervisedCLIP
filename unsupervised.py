@@ -17,6 +17,8 @@ def match(model, processor, dataset, batch_size=256):
     texts = dataset.get_t()
     n = len(texts)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     rel = torch.zeros((n, n), dtype=float)
 
     remind = int(n % batch_size != 0)
@@ -28,7 +30,9 @@ def match(model, processor, dataset, batch_size=256):
             j_s = j * batch_size
             j_t = min(j * batch_size + batch_size, n)
             model.eval()
-            rel_output = model(**processor(text=texts[j_s:j_t], images=images[i_s:i_t], return_tensors='pt', padding='max_length').to("cuda"))
+            input_images = images[i_s:i_t].to(device)
+            inputs = processor(text=texts[j_s:j_t], images=None, return_tensors='pt', padding='max_length').to("cuda")
+            rel_output = model(pixel_values=input_images, input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
             rel_output = rel_output.logits_per_image.detach()
             for x in range(i_t - i_s):
                 for y in range(j_t - j_s):
@@ -45,8 +49,8 @@ if __name__ == '__main__':
     model_name="openai/clip-vit-base-patch32"
     dataset_root="../data/color_swap/"
 
-    lr = 0.000001
-    epochs = 50
+    lr = 0.00001
+    epochs = 20
     batch_size = 16
 
     from datasets import load_dataset
@@ -70,7 +74,7 @@ if __name__ == '__main__':
 
     exptime = datetime.now()
 
-    for iter in tqdm(range(20)):
+    for iter in tqdm(range(iter_num)):
         model.eval()
         test(model, processor, test_labels=f"unsupervised_iter {iter}", pt=True)
         match(model, processor, train_dataset)

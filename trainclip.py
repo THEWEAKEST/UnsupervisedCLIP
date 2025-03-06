@@ -15,7 +15,8 @@ class CustomDataset(Dataset):
         self.images = hf_dataset[:]['image_1'] + hf_dataset[:]['image_2']
         self.text = hf_dataset[:]['caption_1'] + hf_dataset[:]['caption_2']
         self.dataset_root = dataset_root
-        self.transform = transforms.Compose([transforms.Resize((512, 512)), transforms.ToTensor()])
+        self.transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
+                               std=[0.26862954, 0.26130258, 0.27577711])])
         line = []
         for i in range(len(self.images)):
             line.append(self.transform(Image.open(self.dataset_root + self.images[i]).convert('RGB')))
@@ -58,13 +59,14 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
     if label != None:
         pre_str = label + pre_str
 
-    batch_loss = 0.
-
     for i in range(epochs):
         model.train()
+        batch_loss = 0.
         for images, texts in dataloader:
-
-            outputs = model(**processor(text=texts, images=images, return_tensors='pt', padding='max_length').to(device), return_loss=True)
+            
+            images = images.to(device)
+            inputs = processor(text=texts, images=None, return_tensors='pt', padding='max_length').to(device)
+            outputs = model(pixel_values=images, input_ids=inputs.input_ids, attention_mask=inputs.attention_mask, return_loss=True)
             loss = outputs.loss
 
             optimizer.zero_grad()
@@ -120,8 +122,8 @@ if __name__ == '__main__':
 
     from datasets import load_dataset
     colorswap = load_dataset(dataset_root)
-    lr = 0.00005
-    epochs = 50
+    lr = 0.00001
+    epochs = 20
     batch_size = 16
 
     dataloader = DataLoader(CustomDataset(colorswap['train'], dataset_root), batch_size=batch_size, shuffle=True)
