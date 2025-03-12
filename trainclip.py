@@ -39,7 +39,7 @@ class CustomDataset(Dataset):
         self.text = txts
 
 
-def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None):
+def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True):
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -74,20 +74,27 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
             optimizer.step()
 
             batch_loss = batch_loss + loss.item()
-        
         batch_loss = batch_loss / len(dataloader)
+        
         loss_stat.append(batch_loss)
-        print(f"loss at epoch {i}: {batch_loss}")
+
+        #print(f"loss at epoch {i}: {batch_loss}")
         model.eval()
         ts, imgs, gs = test(model, processor, rt=True)
         
+        if wandb_report:
+            return_epoch = i
+            if iter_id >= 0:
+                return_epoch = return_epoch + iter_id * epochs
+            wandb.log({'epoch':return_epoch, 'loss':batch_loss, 'group scores':gs, 'images scores':imgs, 'texts scores':ts})
+
         if ts > best[0] and exptime != None:
             best[0] = ts
             try:
                 os.mkdir(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_txt/')
                 model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_txt/')
             except Exception:
-                ts = ts
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_txt/')
 
         if imgs > best[1] and exptime != None:
             best[1] = imgs
@@ -95,7 +102,7 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
                 os.mkdir(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_img/')
                 model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_img/')
             except Exception:
-                imgs = imgs
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_img/')
 
         if gs > best[2] and exptime != None:
             best[2] = gs
@@ -103,7 +110,7 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
                 os.mkdir(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_group/')
                 model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_group/')
             except Exception:
-                gs = gs
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_group/')
         
         text_sc.append(ts)
         img_sc.append(imgs)
@@ -112,6 +119,9 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
     return model, text_sc, img_sc, group_sc, best, loss_stat
 
 if __name__ == '__main__':
+    import wandb
+    wandb.init(project="UnsupervisedClip")
+    config = wandb.config
     model_name="openai/clip-vit-base-patch32"
     dataset_root="../data/color_swap/"
     from clip_test import test
@@ -122,9 +132,12 @@ if __name__ == '__main__':
 
     from datasets import load_dataset
     colorswap = load_dataset(dataset_root)
-    lr = 0.00001
-    epochs = 20
+    lr = 0.00002
+    epochs = 100
     batch_size = 16
+    config.batch_size = batch_size
+    config.lr = lr
+    config.epochs = epochs
 
     dataloader = DataLoader(CustomDataset(colorswap['train'], dataset_root), batch_size=batch_size, shuffle=True)
 
@@ -132,13 +145,15 @@ if __name__ == '__main__':
     model, text_sc, img_sc, group_sc, _, loss_func = training(model, processor, lr=lr, dataloader=dataloader, epochs=epochs, exptime=datetime.now(), best=[0., 0., 0.])
     test(model, processor, test_labels=f"full data after finetune(lr={lr}, epochs={epochs}), time={datetime.now()}", pt=True)
 
-    from matplotlib import pyplot as plt
-
-    x_axis = np.linspace(0, epochs, epochs + 1)
-    plt.plot(x_axis, [ts] + text_sc, color='blue', marker='o', label='texts scores')
-    plt.plot(x_axis, [imgs] + img_sc, color='red', marker='o', label='images scores')
-    plt.plot(x_axis, [gs] + group_sc, color='green', marker='o', label='groups scores')
-
-    plt.legend()
+    #wandb.save(f"{model_name.split('/')[-1]}+{dataset_root.split('/')[-2]}+{datetime.now()}")
     
-    plt.savefig(f"/scr2/fuzhit/results/{model_name.split('/')[-1]}+{dataset_root.split('/')[-2]}+{datetime.now()}.png")
+    #from matplotlib import pyplot as plt
+
+    #x_axis = np.linspace(0, epochs, epochs + 1)
+    #plt.plot(x_axis, [ts] + text_sc, color='blue', marker='o', label='texts scores')
+    #plt.plot(x_axis, [imgs] + img_sc, color='red', marker='o', label='images scores')
+    #plt.plot(x_axis, [gs] + group_sc, color='green', marker='o', label='groups scores')
+
+    #plt.legend()
+    
+    #plt.savefig(f"/scr2/fuzhit/results/{model_name.split('/')[-1]}+{dataset_root.split('/')[-2]}+{datetime.now()}.png")
