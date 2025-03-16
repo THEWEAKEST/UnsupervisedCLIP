@@ -6,6 +6,7 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+import wandb
 from datasets import load_dataset
 from trainclip import training, CustomDataset
 from clip_test import test
@@ -13,7 +14,8 @@ from scipy.optimize import linear_sum_assignment
 from datetime import datetime
 
 def match(model, processor, dataset, batch_size=256):
-    images = dataset.get_i()
+    images_addr = dataset.get_i()
+    images = [Image.open(img_addr).convert("RGB") for img_addr in images_addr]
     texts = dataset.get_t()
     n = len(texts)
 
@@ -30,9 +32,13 @@ def match(model, processor, dataset, batch_size=256):
             j_s = j * batch_size
             j_t = min(j * batch_size + batch_size, n)
             model.eval()
-            input_images = images[i_s:i_t].to(device)
-            inputs = processor(text=texts[j_s:j_t], images=None, return_tensors='pt', padding='max_length').to("cuda")
-            rel_output = model(pixel_values=input_images, input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
+            inputs = processor(
+                text=texts[j_s:j_t],
+                images=images[i_s:i_t],
+                return_tensors='pt',
+                padding='max_length',
+                )
+            rel_output = model(**inputs.to(device))
             rel_output = rel_output.logits_per_image.detach()
             for x in range(i_t - i_s):
                 for y in range(j_t - j_s):
@@ -46,25 +52,32 @@ def match(model, processor, dataset, batch_size=256):
     
 
 if __name__ == '__main__':
+    wandb.init(project="UnsupervisedClip", entity="UnsupervisedCLIP")
+    config = wandb.config
     model_name="openai/clip-vit-base-patch32"
+    processor_name="openai/clip-vit-base-patch32"
     dataset_root="../data/color_swap/"
 
-    lr = 0.00001
-    epochs = 20
-    batch_size = 16
+    lr = 0.00002
+    epochs = 30
+    iter_num = 10
+    batch_size = 64
+    config.batch_size = batch_size
+    config.lr = lr
+    config.epochs = epochs
+    config.iter_number = iter_num
 
     from datasets import load_dataset
     colorswap = load_dataset(dataset_root)
 
     #test(test_labels="unsupervised")
     model = CLIPModel.from_pretrained(model_name, device_map="cuda")
-    processor = CLIPProcessor.from_pretrained(model_name, device_map="cuda")
+    processor = CLIPProcessor.from_pretrained(processor_name, device_map="cuda")
     train_dataset = CustomDataset(colorswap['train'], dataset_root)
     test_dataset = CustomDataset(colorswap['test'], dataset_root)
     
     st_t, st_i, st_g = test(model, processor, rt=True)
 
-    iter_num = 10
     text_scores = [st_t]
     images_scores = [st_i]
     group_scores = [st_g]
@@ -76,7 +89,7 @@ if __name__ == '__main__':
 
     for iter in tqdm(range(iter_num)):
         model.eval()
-        test(model, processor, test_labels=f"unsupervised_iter {iter}", pt=True)
+        test(model, processor, test_labels=f"unsupervised_iter {iter}")
         match(model, processor, train_dataset)
         dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor, lr=lr, dataloader=dataloader, epochs=epochs, exptime=exptime, best=global_best, iter_id=iter, label='unsupervised')
@@ -88,17 +101,17 @@ if __name__ == '__main__':
             if global_best[i] < best[i]:
                 global_best[i] = best[i]
     
-    from matplotlib import pyplot as plt
+    #from matplotlib import pyplot as plt
 
-    length = len(text_scores)
+    #length = len(text_scores)
 
-    loss_func.append(loss_func[-1])
-    x_axis = np.linspace(0, length, length)
-    plt.plot(x_axis, text_scores, color='blue', marker='o', label='texts scores')
-    plt.plot(x_axis, images_scores, color='red', marker='o', label='images scores')
-    plt.plot(x_axis, group_scores, color='green', marker='o', label='groups scores')
-    plt.plot(x_axis, loss_func, color='black', marker='o', label='loss')
+    #loss_func.append(loss_func[-1])
+    #x_axis = np.linspace(0, length, length)
+    #plt.plot(x_axis, text_scores, color='blue', marker='o', label='texts scores')
+    #plt.plot(x_axis, images_scores, color='red', marker='o', label='images scores')
+    #plt.plot(x_axis, group_scores, color='green', marker='o', label='groups scores')
+    #plt.plot(x_axis, loss_func, color='black', marker='o', label='loss')
 
-    plt.legend()
+    #plt.legend()
     
-    plt.savefig(f"/scr2/fuzhit/results/unsupervised+{dataset_root.split('/')[-2]}+{datetime.now()}.png")
+    #plt.savefig(f"/scr2/fuzhit/results/unsupervised+{dataset_root.split('/')[-2]}+{datetime.now()}.png")
