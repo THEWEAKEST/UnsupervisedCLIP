@@ -9,14 +9,27 @@ from torchvision import transforms
 from datasets import load_dataset
 import os
 from clip_test import test
+import wandb
 
 class CustomDataset(Dataset):
     def __init__(self, hf_dataset, dataset_root):
         self.images = hf_dataset[:]['image_1'] + hf_dataset[:]['image_2']
         for i in range(len(self.images)):
             self.images[i] = dataset_root + self.images[i]
+        '''
+        images_1 = hf_dataset[:]["image_1"]
+        images_2 = hf_dataset[:]["image_2"]
+        self.images = [img for pair in zip(images_1, images_2) for img in pair]
+        
+        for i in range(len(self.images)):
+            self.images[i] = dataset_root + self.images[i]
+        texts_1=hf_dataset[:]['caption_1']
+        texts_2=hf_dataset[:]['caption_2']
+        self.text=[txt for pair in zip(texts_1, texts_2) for txt in pair]
+        '''
         self.text = hf_dataset[:]['caption_1'] + hf_dataset[:]['caption_2']
         self.dataset_root = dataset_root
+        self.sim = None
         #self.transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
                                #std=[0.26862954, 0.26130258, 0.27577711])])
         #line = []
@@ -39,6 +52,8 @@ class CustomDataset(Dataset):
         self.images = imgs
     def update_t(self, txts):
         self.text = txts
+    def update_sim(self, sim):
+        self.sim = sim
 
 
 def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, weight_decay=0.1):
@@ -129,11 +144,11 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
     return model, text_sc, img_sc, group_sc, best, loss_stat
 
 if __name__ == '__main__':
-    import wandb
-    wandb.init(project="UnsupervisedClip")
+    
+    wandb.init(project="UnsupervisedClip", entity="UnsupervisedCLIP")
     config = wandb.config
     model_name="openai/clip-vit-base-patch32"
-    dataset_root="../data/color_swap/"
+    dataset_root="../data/color_swap_0.1k/"
     from clip_test import test
 
     ts, imgs, gs = test(rt=True)
@@ -143,8 +158,8 @@ if __name__ == '__main__':
     from datasets import load_dataset
     colorswap = load_dataset(dataset_root)
     lr = 0.00002
-    epochs = 100
-    batch_size = 16
+    epochs = 10
+    batch_size = 64
     config.batch_size = batch_size
     config.lr = lr
     config.epochs = epochs
