@@ -29,7 +29,6 @@ class CustomDataset(Dataset):
         '''
         self.text = hf_dataset[:]['caption_1'] + hf_dataset[:]['caption_2']
         self.dataset_root = dataset_root
-        self.sim = None
         #self.transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
                                #std=[0.26862954, 0.26130258, 0.27577711])])
         #line = []
@@ -52,8 +51,6 @@ class CustomDataset(Dataset):
         self.images = imgs
     def update_t(self, txts):
         self.text = txts
-    def update_sim(self, sim):
-        self.sim = sim
 
 
 def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, weight_decay=0.1):

@@ -78,17 +78,32 @@ def match(model, processor, dataset, batch_size=64, semi=None, threshold=None):
     
     if semi != None:
         dataset.update_t(semi.get_t()+line)
-        sim = semi.sim + sim
     else:
         dataset.update_t(line)
     new_i = []
     new_t = []
+    
+    # use ratio as threshold
+    for_sort = sim.copy()
+    for_sort.sort()
+
+    threshold = for_sort[int(len(for_sort) * 0.5)]
+
+    print(f"the 1st top sim: {for_sort[0]}")
+    print(f"the 100st top sim: {for_sort[99]}")
+    print(f"the 199st top sim: {for_sort[199]}")
+
     for i in range(len(sim)):
         if threshold != None and sim[i] > threshold:
-            new_i.append(dataset.images[i])
-            new_t.append(dataset.text[i])
+            new_i.append(images_addr[i])
+            new_t.append(line[i])
+    if threshold == None:
+        new_i = images_addr
+        new_t = line
     if semi != None:
         print(f"after matching, the dataset has {len(dataset)} data.")
+        new_i = semi.get_i() + new_i
+        new_t = semi.get_t() + new_t
     if threshold != None:
         print(f"After threshold operation, {len(new_i)} pairs of data left.")
     return NewDataset(new_i, new_t, dataset.dataset_root)
@@ -224,8 +239,8 @@ def rankmatch(model, processor, dataset, batch_size=64, semi=None):
 if __name__ == '__main__':
     wandb.init(project="UnsupervisedClip", entity="UnsupervisedCLIP")
     config = wandb.config
-    #model_name="/scr2/fuzhit/clip_args/2025-03-21 01:10:25.295665semi_group_copy"
-    model_name="openai/clip-vit-base-patch32"
+    model_name="/scr2/fuzhit/clip_args/2025-03-21 01:10:25.295665semi_group_copy"
+    #model_name="openai/clip-vit-base-patch32"
     processor_name="openai/clip-vit-base-patch32"
     dataset_root="../data/color_swap/"
     supervised_dataset_root="../data/color_swap_0.1k/"
@@ -234,9 +249,9 @@ if __name__ == '__main__':
     epochs = 20
     iter_num = 10
     batch_size = 64
-    threshold = 34.2
+    threshold = 37.2
     limited = False
-    semi = False
+    semi = True
     match_method = 'li' # use rank to build pseudo labels
     config.batch_size = batch_size
     config.lr = lr
