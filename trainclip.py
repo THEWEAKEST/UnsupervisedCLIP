@@ -10,7 +10,10 @@ from datasets import load_dataset
 import os
 from clip_test import test
 import wandb
-
+import argparse
+from torch.optim.lr_scheduler import LambdaLR
+def lr_lambda(current_step):
+    return 1.0 - float(current_step) / float(2100)
 class CustomDataset(Dataset):
     def __init__(self, hf_dataset, dataset_root):
         self.images = hf_dataset[:]['image_1'] + hf_dataset[:]['image_2']
@@ -53,10 +56,14 @@ class CustomDataset(Dataset):
         self.text = txts
 
 
-def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, weight_decay=0.1):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, weight_decay=0.1, factor=1.0, linear_decay=False):
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    if linear_decay:
+        scheduler = LambdaLR(optimizer, lr_lambda)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+    print(lr,weight_decay,epochs)
     #processor.to(device)
 
     text_sc = []
@@ -89,11 +96,13 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
                     padding="max_length",
                 )
             outputs = model(**input.to(device), return_loss=True)
-            loss = outputs.loss
+            loss = factor * outputs.loss
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if linear_decay:
+                scheduler.step()
 
             batch_loss = batch_loss + loss.item()
         batch_loss = batch_loss / len(dataloader)
@@ -101,15 +110,21 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
         loss_stat.append(batch_loss)
 
         #print(f"loss at epoch {i}: {batch_loss}")
+        #if i%10==0:
         model.eval()
         ts, imgs, gs = test(model, processor, rt=True)
-        
+        #    print('middle-metrics: ')
+        #print(ts,imgs,gs)
+        #if i==epochs-1:
+        #    model.eval()
+        #    ts, imgs, gs = test(model, processor, rt=True)
+        #    print('Testing-metrics: ')
+        #    print(ts,imgs,gs)
         if wandb_report:
             return_epoch = i
             if iter_id >= 0:
                 return_epoch = return_epoch + iter_id * epochs
             wandb.log({'epoch':return_epoch, 'loss':batch_loss, 'group scores':gs, 'images scores':imgs, 'texts scores':ts})
-
         if ts > best[0] and exptime != None:
             best[0] = ts
             try:
@@ -142,10 +157,18 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
 
 if __name__ == '__main__':
     
+    parser = argparse.ArgumentParser(description="Supervised CLIP")
+
+    parser.add_argument('--dataset_root', type=str, default="../data/color_swap/")
+    parser.add_argument('--epochs', type=int, default=10)
+
+    args = parser.parse_args()
+
     wandb.init(project="UnsupervisedClip", entity="UnsupervisedCLIP")
     config = wandb.config
     model_name="openai/clip-vit-base-patch32"
-    dataset_root="../data/color_swap_0.1k/"
+    dataset_root = args.dataset_root
+    #dataset_root="../data/color_swap_0.1k/"
     from clip_test import test
 
     ts, imgs, gs = test(rt=True)
@@ -155,16 +178,16 @@ if __name__ == '__main__':
     from datasets import load_dataset
     colorswap = load_dataset(dataset_root)
     lr = 0.00002
-    epochs = 10
+    epochs = args.epochs
     batch_size = 64
     config.batch_size = batch_size
     config.lr = lr
     config.epochs = epochs
 
     dataloader = DataLoader(CustomDataset(colorswap['train'], dataset_root), batch_size=batch_size, shuffle=True)
-
+    #print(len(dataloader))
     from datetime import datetime
-    model, text_sc, img_sc, group_sc, _, loss_func = training(model, processor, lr=lr, dataloader=dataloader, epochs=epochs, exptime=datetime.now(), best=[0., 0., 0.])
+    model, text_sc, img_sc, group_sc, _, loss_func = training(model, processor, lr=lr, dataloader=dataloader, epochs=epochs, exptime=datetime.now(), best=[0., 0., 0.], label="supervised_10epochs", linear_decay=True)
     #test(model, processor, test_labels=f"full data after finetune(lr={lr}, epochs={epochs}), time={datetime.now()}", pt=True)
 
     #wandb.save(f"{model_name.split('/')[-1]}+{dataset_root.split('/')[-2]}+{datetime.now()}")
