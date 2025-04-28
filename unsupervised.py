@@ -179,9 +179,9 @@ def match(model, processor, dataset, batch_size=64, semi=None, scheduler=None, l
     else:
         threshold = None
 
-    print(f"the 1st top sim: {for_sort[0]}")
-    print(f"the 100st top sim: {for_sort[99]}")
-    print(f"the 199st top sim: {for_sort[199]}")
+    #print(f"the 1st top sim: {for_sort[0]}")
+    #print(f"the 100st top sim: {for_sort[99]}")
+    #print(f"the 199st top sim: {for_sort[199]}")
 
     for i in range(len(sim)):
         if threshold != None and sim[i] > threshold:
@@ -531,6 +531,19 @@ if __name__ == '__main__':
         else:
             #train with labeled data
             sup_dataloader = DataLoader(supervised_dataset, batch_size=l_batch_size, shuffle=True)
+            '''
+            sup_dataloader = DataLoader(supervised_dataset, batch_size=batch_size, shuffle=True)
+            model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
+                                                                     lr=lr,
+                                                                     dataloader=sup_dataloader,                                                                    
+                                                                     epochs=epochs,
+                                                                     exptime=exptime,
+                                                                     best=global_best,
+                                                                     iter_id=iter,
+                                                                     label='unsupervised',
+                                                                     factor=loss_lambda,
+                                                                     linear_decay=linear_decay)
+            '''
             #train with unlabeled data
             dataloader = DataLoader(new_dataset, batch_size=u_batch_size, shuffle=True)
             model, text_sc, img_sc, group_sc, best, loss_stat = mix_training(model, processor,
@@ -544,6 +557,19 @@ if __name__ == '__main__':
                                                                      label='unsupervised',
                                                                      factor=loss_lambda,
                                                                      linear_decay=linear_decay)
+            '''
+            dataloader = DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
+            model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
+                                                                     lr=lr,
+                                                                     dataloader=dataloader,                                                                     
+                                                                     epochs=epochs,
+                                                                     exptime=exptime,
+                                                                     best=global_best,
+                                                                     iter_id=iter,
+                                                                     label='unsupervised',
+                                                                     factor=loss_lambda,
+                                                                     linear_decay=linear_decay)
+            '''
 
         if args.threshold_dynamics == 2:
             update_scheduler(scheduler, supervised_dataset)
