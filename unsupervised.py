@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import wandb
 from datasets import load_dataset
-from trainclip import training, CustomDataset
+from trainclip import training, CustomDataset, mix_training
 from clip_test import test
 from scipy.optimize import linear_sum_assignment
 from datetime import datetime
@@ -16,7 +16,7 @@ import argparse
 import os
 
 class threshold_scheduler:
-    def __init__(self, threshold):
+    def __init__(self, threshold, linear_decay=None):
         self.cnt = 0
         self.threshold = threshold
     
@@ -383,7 +383,7 @@ if __name__ == '__main__':
     parser.add_argument('--threshold_dynamics', type=int, default=0) # 0: no threshold 1: fixed threshold ratio 2: dynamics threshold 3: fixed threshold
     parser.add_argument('--threshold_value', type=float, default=0.7)
     #parser.add_argument('--unsupervised', type=bool, default=True)
-    parser.add_argument('--rand_seed', type=int, default=0) # 0, 17
+    parser.add_argument('--rand_seed', type=int, default=0) # 0, 17, 23, 29
 
     args = parser.parse_args()
 
@@ -486,6 +486,12 @@ if __name__ == '__main__':
     print(f"threshold scheduler is {scheduler}, model name is {model_name}, dataset is {dataset_root}, supervised dataset is {supervised_dataset_root}")
     if scheduler != None:
         print(f"Threshold is {scheduler.get()}")
+    if semi and args.loss_lambda != None:
+        u_ratio =  len(standard_train) / len(train_dataset) 
+        u_batch_size = int(u_ratio * batch_size)
+        l_batch_size = batch_size - u_batch_size
+        print(f"labeled batch size is {l_batch_size}")
+        print(f"unlabel batch size is {u_batch_size}")
     for iter in tqdm(range(iter_num)):
         model.eval()
         #test(model, processor, test_labels=f"unsupervised_iter {iter}")
@@ -524,22 +530,13 @@ if __name__ == '__main__':
         
         else:
             #train with labeled data
-            dataloader = DataLoader(supervised_dataset, batch_size=batch_size, shuffle=True)
-            model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
-                                                                     lr=lr,
-                                                                     dataloader=dataloader,
-                                                                     epochs=epochs,
-                                                                     exptime=exptime,
-                                                                     best=global_best,
-                                                                     iter_id=iter,
-                                                                     label='unsupervised',
-                                                                     linear_decay=linear_decay)
-
+            sup_dataloader = DataLoader(supervised_dataset, batch_size=l_batch_size, shuffle=True)
             #train with unlabeled data
-            dataloader = DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
-            model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
+            dataloader = DataLoader(new_dataset, batch_size=u_batch_size, shuffle=True)
+            model, text_sc, img_sc, group_sc, best, loss_stat = mix_training(model, processor,
                                                                      lr=lr,
-                                                                     dataloader=dataloader,
+                                                                     dataloader=sup_dataloader,
+                                                                     u_dataloader=dataloader,
                                                                      epochs=epochs,
                                                                      exptime=exptime,
                                                                      best=global_best,
