@@ -176,6 +176,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--dataset_root', type=str, default="../data/color_swap/")
     parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--decay_f', type=int, default=0) # if decay_f is 0, decay after each batch, otherwise, 1, decay after each epoch
 
     args = parser.parse_args()
 
@@ -199,12 +200,37 @@ if __name__ == '__main__':
     config.lr = lr
     config.epochs = epochs
 
+    weight_decay = 0.1
+
     dataloader = DataLoader(CustomDataset(colorswap['train'], dataset_root), batch_size=batch_size, shuffle=True)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
+    scheduler = LambdaLR(optimizer, lr_lambda)
     #print(len(dataloader))
     from datetime import datetime
-    model, text_sc, img_sc, group_sc, _, loss_func = training(model, processor, lr=lr, dataloader=dataloader, epochs=epochs, exptime=datetime.now(), best=[0., 0., 0.], label="supervised_10epochs", linear_decay=True)
+    model, text_sc, img_sc, group_sc, _, loss_func = training(model, processor,
+                                                                dataloader=dataloader,
+                                                                optimizer=optimizer,
+                                                                scheduler=scheduler,
+                                                                epochs=epochs,
+                                                                exptime=datetime.now(),
+                                                                best=[0., 0., 0.],
+                                                                label="supervised_10epochs",
+                                                                decay_f=args.decay_f)
+    '''
+    model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
+                                                                     dataloader=dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                                     
+                                                                     epochs=epochs,
+                                                                     exptime=exptime,
+                                                                     best=global_best,
+                                                                     iter_id=iter,
+                                                                     label='unsupervised',
+                                                                     factor=loss_lambda,
+                                                                     decay_f=args.decay_f)
     #test(model, processor, test_labels=f"full data after finetune(lr={lr}, epochs={epochs}), time={datetime.now()}", pt=True)
 
+    '''
     #wandb.save(f"{model_name.split('/')[-1]}+{dataset_root.split('/')[-2]}+{datetime.now()}")
     
     #from matplotlib import pyplot as plt

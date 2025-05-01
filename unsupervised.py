@@ -387,7 +387,8 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description="Unsupervised CLIP")
     parser.add_argument('--epochs', type=int, default=20)
-    parser.add_argument('--semi', type=bool, default=0)
+    parser.add_argument('--semi', type=bool, default=0) # if semi==3, exchange the order of labeled training and unlabeled training during semi-supervised separate training
+    # if semi == 4, using mix_training method, during semi-supervised training
     parser.add_argument('--loss_lambda', type=float, default=-1)
     parser.add_argument('--match_methods', type=str, default="li")
     parser.add_argument('--threshold_dynamics', type=int, default=0) # 0: no threshold 1: fixed threshold ratio 2: dynamics threshold 3: fixed threshold
@@ -435,7 +436,7 @@ if __name__ == '__main__':
 
     from datasets import load_dataset
     colorswap = load_dataset(dataset_root)
-    if semi:
+    if semi > 0:
         supervised_dataset = CustomDataset(load_dataset(supervised_dataset_root)['train'], dataset_root=supervised_dataset_root)
     else:
         supervised_dataset = None
@@ -445,7 +446,7 @@ if __name__ == '__main__':
     processor = CLIPProcessor.from_pretrained(processor_name, device_map="cuda")
     train_dataset = CustomDataset(colorswap['train'], dataset_root)
     standard_train = CustomDataset(colorswap['train'], dataset_root)
-    if semi and loss_lambda != None:
+    if semi > 0 and loss_lambda != None:
         supervised_images = supervised_dataset.get_i().copy()
         for i in range(len(supervised_images)):
             supervised_images[i] = supervised_images[i].split('/')[-1]
@@ -507,7 +508,7 @@ if __name__ == '__main__':
     print(f"threshold scheduler is {th_scheduler}, model name is {model_name}, dataset is {dataset_root}, supervised dataset is {supervised_dataset_root}")
     if th_scheduler != None:
         print(f"Threshold is {th_scheduler.get()}")
-    if semi and args.loss_lambda != None:
+    if semi > 0 and args.loss_lambda != None:
         u_ratio =  len(standard_train) / len(train_dataset) 
         u_batch_size = int(u_ratio * batch_size)
         l_batch_size = batch_size - u_batch_size
@@ -550,7 +551,7 @@ if __name__ == '__main__':
                                                                      label='unsupervised',
                                                                      decay_f=args.decay_f)
         
-        else:
+        elif semi == 4:
             #train with labeled data
             sup_dataloader = DataLoader(supervised_dataset, batch_size=l_batch_size, shuffle=True)
             '''
@@ -595,7 +596,64 @@ if __name__ == '__main__':
                                                                      factor=loss_lambda,
                                                                      decay_f=args.decay_f)
             '''
+        elif semi == 1:
+            sup_dataloader = DataLoader(supervised_dataset, batch_size=batch_size, shuffle=True)
+            model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
+                                                                     dataloader=sup_dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                               
+                                                                     epochs=epochs,
+                                                                     exptime=exptime,
+                                                                     best=global_best,
+                                                                     iter_id=iter,
+                                                                     label='unsupervised',
+                                                                     factor=1.0,
+                                                                     decay_f=args.decay_f)
+            
+            dataloader = DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
+            model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
+                                                                     dataloader=dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                                     
+                                                                     epochs=epochs,
+                                                                     exptime=exptime,
+                                                                     best=global_best,
+                                                                     iter_id=iter,
+                                                                     label='unsupervised',
+                                                                     factor=loss_lambda,
+                                                                     decay_f=args.decay_f)
 
+        elif semi == 3:
+            # reverse the order of labeled and unlabeled
+            dataloader = DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
+            model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
+                                                                     dataloader=dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                                     
+                                                                     epochs=epochs,
+                                                                     exptime=exptime,
+                                                                     best=global_best,
+                                                                     iter_id=iter,
+                                                                     label='unsupervised',
+                                                                     factor=loss_lambda,
+                                                                     decay_f=args.decay_f)
+
+            sup_dataloader = DataLoader(supervised_dataset, batch_size=batch_size, shuffle=True)
+            model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
+                                                                     dataloader=sup_dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                               
+                                                                     epochs=epochs,
+                                                                     exptime=exptime,
+                                                                     best=global_best,
+                                                                     iter_id=iter,
+                                                                     label='unsupervised',
+                                                                     factor=1.0,
+                                                                     decay_f=args.decay_f)
+        else:
+            print(f"loss_lambda is {loss_lambda}, semi is {semi}, error")
+            quit()
+        
         if args.threshold_dynamics == 2:
             update_scheduler(scheduler, supervised_dataset)
             wandb.log({'after updating threshold: ': scheduler.get()})
