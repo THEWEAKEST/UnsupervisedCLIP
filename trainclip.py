@@ -13,7 +13,8 @@ import wandb
 import argparse
 from torch.optim.lr_scheduler import LambdaLR
 def lr_lambda(current_step):
-    return 1.0 - float(current_step) / float(2100)
+    #return 1.0 - float(current_step) / float(2100)
+    return max(1.0 - float(current_step) / float(2100), 0)
 class CustomDataset(Dataset):
     def __init__(self, hf_dataset, dataset_root):
         self.images = hf_dataset[:]['image_1'] + hf_dataset[:]['image_2']
@@ -64,14 +65,18 @@ def clip_loss(similarity: torch.Tensor) -> torch.Tensor:
     image_loss = contrastive_loss(similarity.t())
     return (caption_loss + image_loss) / 2.0
 
-def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, weight_decay=0.1, factor=1.0, linear_decay=False):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
+def training(model, processor, dataloader, optimizer, scheduler=None, epochs=100, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, factor=1.0, decay_f=0):
+    #optimizer = torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
     #optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    if linear_decay:
-        scheduler = LambdaLR(optimizer, lr_lambda)
+    #if linear_decay:
+    #    scheduler = LambdaLR(optimizer, lr_lambda)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    print(lr,weight_decay,epochs)
+    try:
+        print(f"At iteration {iter_id}, the learning rate is {optimizer.param_groups[0]['lr']}")
+    except Exception:
+        pass
+    #print(lr,weight_decay,epochs)
     #processor.to(device)
 
     text_sc = []
@@ -109,8 +114,10 @@ def training(model, processor, dataloader, epochs=100, lr=0.00001, exptime=None,
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if linear_decay:
+            if scheduler != None and decay_f == 0:
                 scheduler.step()
+        if scheduler != None and decay_f == 1:
+            scheduler.step()
 
             batch_loss = batch_loss + loss.item()
         batch_loss = batch_loss / len(dataloader)
@@ -211,14 +218,14 @@ if __name__ == '__main__':
     
     #plt.savefig(f"/scr2/fuzhit/results/{model_name.split('/')[-1]}+{dataset_root.split('/')[-2]}+{datetime.now()}.png")
 
-def mix_training(model, processor, dataloader, u_dataloader, epochs=100, lr=0.00001, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, weight_decay=0.1, factor=1.0, linear_decay=False):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
+def mix_training(model, processor, dataloader, u_dataloader, optimizer, scheduler=None, epochs=100, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, factor=1.0, decay_f=0):
+    #optimizer = torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
     #optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    if linear_decay:
-        scheduler = LambdaLR(optimizer, lr_lambda)
+    #if linear_decay:
+    #    scheduler = LambdaLR(optimizer, lr_lambda)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    print(lr,weight_decay,epochs)
+    #print(lr,weight_decay,epochs)
     #processor.to(device)
 
     text_sc = []
@@ -280,10 +287,13 @@ def mix_training(model, processor, dataloader, u_dataloader, epochs=100, lr=0.00
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if linear_decay:
+            if scheduler != None and decay_f == 0: # decay after each batch
                 scheduler.step()
 
             batch_loss = batch_loss + loss.item()
+
+        if scheduler != None and decay_f == 1: #decay after each epoch
+            scheduler.step()
         batch_loss = batch_loss / len(dataloader)
         
         loss_stat.append(batch_loss)

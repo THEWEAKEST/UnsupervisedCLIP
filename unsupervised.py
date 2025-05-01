@@ -14,6 +14,16 @@ from scipy.optimize import linear_sum_assignment
 from datetime import datetime
 import argparse
 import os
+from torch.optim.lr_scheduler import LambdaLR
+
+def lr_lambda_epoch(current_step):
+    #decay after every epoch
+    #return 1.0 - float(current_step) / float(2100)
+    return max(1.0 - float(current_step) / float(200), 0)
+
+def lr_lambda_batch(current_step):
+    #decay after every batch
+    return max(1.0 - float(current_step) / float(4000), 0)
 
 class threshold_scheduler:
     def __init__(self, threshold, linear_decay=None):
@@ -384,6 +394,7 @@ if __name__ == '__main__':
     parser.add_argument('--threshold_value', type=float, default=0.7)
     #parser.add_argument('--unsupervised', type=bool, default=True)
     parser.add_argument('--rand_seed', type=int, default=0) # 0, 17, 23, 29
+    parser.add_argument('--decay_f', type=int, default=0) # indicate how to decay learning rate. if 0, decay after every batch, otherwise, 1, decay after every epoch. it depends on models
 
     args = parser.parse_args()
 
@@ -411,7 +422,7 @@ if __name__ == '__main__':
     lr = 0.00002
     epochs = args.epochs
     iter_num = 10
-    batch_size = 64
+    batch_size = 70
     threshold = 37.2
     limited = True
     loss_lambda = args.loss_lambda # if loss_lambda is not None, seperate dataset into labeled DS and unlabeled DS
@@ -473,19 +484,29 @@ if __name__ == '__main__':
 
     global_best = [0., 0., 0.]
 
-    scheduler = None
+    th_scheduler = None
 
     if args.threshold_dynamics != 0:
-        scheduler = threshold_scheduler(threshold=args.threshold_value)
+        th_scheduler = threshold_scheduler(threshold=args.threshold_value)
 
     #linear_decay = False
 
     exptime = datetime.now()
     new_dataset = None
     linear_decay = True
-    print(f"threshold scheduler is {scheduler}, model name is {model_name}, dataset is {dataset_root}, supervised dataset is {supervised_dataset_root}")
-    if scheduler != None:
-        print(f"Threshold is {scheduler.get()}")
+    weight_decay = 0.1
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
+    if linear_decay:
+        if args.decay_f == 1: # decay after each epoch
+            scheduler = LambdaLR(optimizer, lr_lambda_epoch)
+        elif args.decay_f == 0:
+            scheduler = LambdaLR(optimizer, lr_lambda_batch)
+        else:
+            print("Error args.decay_f")
+            quit()
+    print(f"threshold scheduler is {th_scheduler}, model name is {model_name}, dataset is {dataset_root}, supervised dataset is {supervised_dataset_root}")
+    if th_scheduler != None:
+        print(f"Threshold is {th_scheduler.get()}")
     if semi and args.loss_lambda != None:
         u_ratio =  len(standard_train) / len(train_dataset) 
         u_batch_size = int(u_ratio * batch_size)
@@ -496,11 +517,11 @@ if __name__ == '__main__':
         model.eval()
         #test(model, processor, test_labels=f"unsupervised_iter {iter}")
         if match_method == 'rank':
-            new_dataset = rankmatch(model, processor, train_dataset, semi=supervised_dataset, loss_lambda=loss_lambda, scheduler=scheduler)
+            new_dataset = rankmatch(model, processor, train_dataset, semi=supervised_dataset, loss_lambda=loss_lambda, scheduler=th_scheduler)
         elif match_method == 'li':        
-            new_dataset = match(model, processor, train_dataset, semi=supervised_dataset, scheduler=scheduler, loss_lambda=loss_lambda)
+            new_dataset = match(model, processor, train_dataset, semi=supervised_dataset, scheduler=th_scheduler, loss_lambda=loss_lambda)
         else:
-            new_dataset = greedy(model, processor, train_dataset, semi=supervised_dataset, limited=limited, loss_lambda=loss_lambda, scheduler=scheduler)
+            new_dataset = greedy(model, processor, train_dataset, semi=supervised_dataset, limited=limited, loss_lambda=loss_lambda, scheduler=th_scheduler)
         
         new_texts = new_dataset.get_t()
         new_images = new_dataset.get_i().copy()
@@ -519,14 +540,15 @@ if __name__ == '__main__':
         if loss_lambda == None: # not seperate
             dataloader = DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
             model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
-                                                                     lr=lr,
                                                                      dataloader=dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,
                                                                      epochs=epochs,
                                                                      exptime=exptime,
                                                                      best=global_best,
                                                                      iter_id=iter,
                                                                      label='unsupervised',
-                                                                     linear_decay=linear_decay)
+                                                                     decay_f=args.decay_f)
         
         else:
             #train with labeled data
@@ -534,41 +556,44 @@ if __name__ == '__main__':
             '''
             sup_dataloader = DataLoader(supervised_dataset, batch_size=batch_size, shuffle=True)
             model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
-                                                                     lr=lr,
-                                                                     dataloader=sup_dataloader,                                                                    
+                                                                     dataloader=sup_dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                               
                                                                      epochs=epochs,
                                                                      exptime=exptime,
                                                                      best=global_best,
                                                                      iter_id=iter,
                                                                      label='unsupervised',
                                                                      factor=loss_lambda,
-                                                                     linear_decay=linear_decay)
+                                                                     decay_f=args.decay_f)
             '''
             #train with unlabeled data
             dataloader = DataLoader(new_dataset, batch_size=u_batch_size, shuffle=True)
             model, text_sc, img_sc, group_sc, best, loss_stat = mix_training(model, processor,
-                                                                     lr=lr,
                                                                      dataloader=sup_dataloader,
                                                                      u_dataloader=dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                    
                                                                      epochs=epochs,
                                                                      exptime=exptime,
                                                                      best=global_best,
                                                                      iter_id=iter,
                                                                      label='unsupervised',
                                                                      factor=loss_lambda,
-                                                                     linear_decay=linear_decay)
+                                                                     decay_f=args.decay_f)
             '''
             dataloader = DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
             model, text_sc, img_sc, group_sc, best, loss_stat = training(model, processor,
-                                                                     lr=lr,
-                                                                     dataloader=dataloader,                                                                     
+                                                                     dataloader=dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                                     
                                                                      epochs=epochs,
                                                                      exptime=exptime,
                                                                      best=global_best,
                                                                      iter_id=iter,
                                                                      label='unsupervised',
                                                                      factor=loss_lambda,
-                                                                     linear_decay=linear_decay)
+                                                                     decay_f=args.decay_f)
             '''
 
         if args.threshold_dynamics == 2:
