@@ -195,7 +195,7 @@ if __name__ == '__main__':
     colorswap = load_dataset(dataset_root)
     lr = 0.00002
     epochs = args.epochs
-    batch_size = 64
+    batch_size = 70
     config.batch_size = batch_size
     config.lr = lr
     config.epochs = epochs
@@ -318,6 +318,146 @@ def mix_training(model, processor, dataloader, u_dataloader, optimizer, schedule
 
             batch_loss = batch_loss + loss.item()
 
+        if scheduler != None and decay_f == 1: #decay after each epoch
+            scheduler.step()
+        batch_loss = batch_loss / len(dataloader)
+        
+        loss_stat.append(batch_loss)
+
+        #print(f"loss at epoch {i}: {batch_loss}")
+        #if i%10==0:
+        model.eval()
+        ts, imgs, gs = test(model, processor, rt=True)
+        #    print('middle-metrics: ')
+        #print(ts,imgs,gs)
+        #if i==epochs-1:
+        #    model.eval()
+        #    ts, imgs, gs = test(model, processor, rt=True)
+        #    print('Testing-metrics: ')
+        #    print(ts,imgs,gs)
+        if wandb_report:
+            return_epoch = i
+            if iter_id >= 0:
+                return_epoch = return_epoch + iter_id * epochs
+            wandb.log({'epoch':return_epoch, 'loss':batch_loss, 'group scores':gs, 'images scores':imgs, 'texts scores':ts})
+        if ts > best[0] and exptime != None:
+            best[0] = ts
+            try:
+                os.mkdir(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_txt/')
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_txt/')
+            except Exception:
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_txt/')
+
+        if imgs > best[1] and exptime != None:
+            best[1] = imgs
+            try:
+                os.mkdir(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_img/')
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_img/')
+            except Exception:
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_img/')
+
+        if gs > best[2] and exptime != None:
+            best[2] = gs
+            try:
+                os.mkdir(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_group/')
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_group/')
+            except Exception:
+                model.save_pretrained(f'/scr2/fuzhit/clip_args/{pre_str}{iter_str}_group/')
+        
+        text_sc.append(ts)
+        img_sc.append(imgs)
+        group_sc.append(gs)
+
+    return model, text_sc, img_sc, group_sc, best, loss_stat
+
+def mix_training_ver_2(model, processor, dataloader, u_dataloader, optimizer, scheduler=None, epochs=100, exptime=None, best=[0., 0., 0.], iter_id=-1, label=None, wandb_report=True, factor=1.0, decay_f=0):
+    #optimizer = torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    #if linear_decay:
+    #    scheduler = LambdaLR(optimizer, lr_lambda)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    #print(lr,weight_decay,epochs)
+    #processor.to(device)
+
+    text_sc = []
+    img_sc = []
+    group_sc = []
+    loss_stat = []
+
+    pre_str = ""
+    iter_str = "semi"
+    if iter_id >= 0:
+        iter_str = f"_iter{iter_id}"
+    if exptime != None:
+        pre_str = str(exptime)
+    if label != None:
+        pre_str = label + pre_str
+
+    u_dataloader_iter = iter(u_dataloader)
+
+    for i in tqdm(range(epochs)):
+        model.train()
+        batch_loss = 0.
+        dataloader_iter = iter(dataloader)
+        if len(list(u_dataloader_iter)) == 0: # if u_dataloader_iter bingo
+            u_dataloader_iter = iter(u_dataloader) # reload
+
+        #for (images_addr, texts), (u_images_addr, u_texts) in zip(dataloader, u_dataloader):
+        iter_cnt = 0
+        while True:
+            try:
+                images_addr, texts = next(dataloader_iter)
+                u_images_addr, u_texts = next(u_dataloader_iter)
+            except StopIteration:
+                break   
+            iter_cnt = iter_cnt + 1
+            #images = images.to(device)
+            #inputs = processor(text=texts, images=None, return_tensors='pt', padding='max_length').to(device)
+            #outputs = model(pixel_values=images, input_ids=inputs.input_ids, attention_mask=inputs.attention_mask, return_loss=True)
+            len_label = len(images_addr)
+            new_images = images_addr + u_images_addr
+            new_texts = texts + u_texts
+
+            total_len = len(new_images)
+
+            images = [Image.open(img_addr).convert("RGB") for img_addr in new_images]
+            input = processor(
+                    text=new_texts,
+                    images=images,
+                    return_tensors="pt",
+                    padding="max_length",
+                )
+            outputs = model(**input.to(device), return_loss=True)
+
+            label_logit = outputs.logits_per_text[:len_label, :len_label]
+            u_logit = outputs.logits_per_text[len_label:, len_label:]
+
+            #if iter_id == 0 and i == 0:
+            #    print(f"shape of labeled logits: {label_logit.shape}")
+            #    print(f"shape of unlabeled logits: {u_logit.shape}")
+            
+            loss_label = 0.
+            loss_u = 0.
+
+            if len_label > 0:
+                loss_label = clip_loss(label_logit)
+            if total_len > len_label:
+                loss_u = clip_loss(u_logit)
+
+            loss = loss_label + factor * loss_u
+
+            #loss = factor * outputs.loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            if scheduler != None and decay_f == 0: # decay after each batch
+                scheduler.step()
+
+            batch_loss = batch_loss + loss.item()
+
+        print(f"iter count is {iter_cnt}")
         if scheduler != None and decay_f == 1: #decay after each epoch
             scheduler.step()
         batch_loss = batch_loss / len(dataloader)

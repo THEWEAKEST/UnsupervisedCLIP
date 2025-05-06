@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import wandb
 from datasets import load_dataset
-from trainclip import training, CustomDataset, mix_training
+from trainclip import training, CustomDataset, mix_training, mix_training_ver_2
 from clip_test import test
 from scipy.optimize import linear_sum_assignment
 from datetime import datetime
@@ -387,7 +387,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description="Unsupervised CLIP")
     parser.add_argument('--epochs', type=int, default=20)
-    parser.add_argument('--semi', type=bool, default=0) # if semi==3, exchange the order of labeled training and unlabeled training during semi-supervised separate training
+    parser.add_argument('--semi', type=int, default=0) # if semi==3, exchange the order of labeled training and unlabeled training during semi-supervised separate training
     # if semi == 4, using mix_training method, during semi-supervised training
     parser.add_argument('--loss_lambda', type=float, default=-1)
     parser.add_argument('--match_methods', type=str, default="li")
@@ -508,7 +508,7 @@ if __name__ == '__main__':
     print(f"threshold scheduler is {th_scheduler}, model name is {model_name}, dataset is {dataset_root}, supervised dataset is {supervised_dataset_root}")
     if th_scheduler != None:
         print(f"Threshold is {th_scheduler.get()}")
-    if semi > 0 and args.loss_lambda != None:
+    if semi == 4 and args.loss_lambda != None:
         u_ratio =  len(standard_train) / len(train_dataset) 
         u_batch_size = int(u_ratio * batch_size)
         l_batch_size = batch_size - u_batch_size
@@ -649,6 +649,22 @@ if __name__ == '__main__':
                                                                      iter_id=iter,
                                                                      label='unsupervised',
                                                                      factor=1.0,
+                                                                     decay_f=args.decay_f)
+        
+        elif semi == 2:
+            sup_dataloader = DataLoader(supervised_dataset, batch_size=batch_size, shuffle=True)
+            dataloader = DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
+            model, text_sc, img_sc, group_sc, best, loss_stat = mix_training_ver_2(model, processor,
+                                                                     dataloader=sup_dataloader,
+                                                                     u_dataloader=dataloader,
+                                                                     optimizer=optimizer,
+                                                                     scheduler=scheduler,                                                    
+                                                                     epochs=epochs,
+                                                                     exptime=exptime,
+                                                                     best=global_best,
+                                                                     iter_id=iter,
+                                                                     label='unsupervised',
+                                                                     factor=loss_lambda,
                                                                      decay_f=args.decay_f)
         else:
             print(f"loss_lambda is {loss_lambda}, semi is {semi}, error")
